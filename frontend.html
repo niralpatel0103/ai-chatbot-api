@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Customer Support System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .response {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+        }
+        .response-content {
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #dc3545;
+        }
+        .loading {
+            text-align: center;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI Customer Support System</h1>
+            <p>Upload a PDF and ask questions naturally</p>
+        </div>
+        
+        <div class="input-group">
+            <label for="fileInput">Upload PDF:</label>
+            <input type="file" id="fileInput" accept=".pdf">
+            <button onclick="uploadPDF()">Upload PDF</button>
+        </div>
+        
+        <div class="input-group">
+            <label for="questionInput">Ask Question:</label>
+            <textarea id="questionInput" rows="3" placeholder="e.g., 'how many math questions are there?' or 'question 5' or 'help with calculations'"></textarea>
+            <button onclick="askQuestion()">Ask</button>
+        </div>
+        
+        <div id="response" class="response" style="display: none;">
+            <div class="loading" id="loading" style="display: none;">
+                <p>🔄 Processing...</p>
+            </div>
+            <div id="responseContent"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://127.0.0.1:8000';
+        
+        async function uploadPDF() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select a PDF file');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                showLoading(true);
+                const response = await fetch(`${API_BASE}/admin/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.error) {
+                    showError(result.error);
+                } else {
+                    showSuccess(`PDF uploaded successfully! ${result.total_questions} questions extracted.`);
+                }
+                
+            } catch (error) {
+                showError('Upload failed: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function askQuestion() {
+            const questionInput = document.getElementById('questionInput');
+            const question = questionInput.value.trim();
+            
+            if (!question) {
+                alert('Please enter a question');
+                return;
+            }
+            
+            try {
+                showLoading(true);
+                const response = await fetch(`${API_BASE}/ask?q=${encodeURIComponent(question)}`);
+                const result = await response.json();
+                
+                if (result.error) {
+                    showError(result.error);
+                } else {
+                    showResponse(result);
+                }
+                
+            } catch (error) {
+                showError('Query failed: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.getElementById('response').style.display = show ? 'none' : 'block';
+        }
+        
+        function showResponse(result) {
+            const responseDiv = document.getElementById('response');
+            const responseContent = document.getElementById('responseContent');
+            
+            let html = `
+                <h3>💬 Question:</h3>
+                <p><strong>${result.question}</strong></p>
+                
+                <h3>🤖 Answer:</h3>
+                <div class="response-content">
+                    ${result.answer}
+                </div>
+                
+                <h4>📊 Sources:</h4>
+            `;
+            
+            if (result.sources && result.sources.length > 0) {
+                html += '<ul>';
+                result.sources.forEach(source => {
+                    if (source.page) {
+                        html += `<li><strong>Page ${source.page}:</strong> ${source.snippet}</li>`;
+                    } else if (source.note) {
+                        html += `<li><em>${source.note}</em></li>`;
+                    }
+                });
+                html += '</ul>';
+            }
+            
+            if (result.intent) {
+                html += `
+                    <h4>🎯 Intent Detected:</h4>
+                    <p><strong>Type:</strong> ${result.intent.type}</p>
+                    ${result.intent.topic ? `<p><strong>Topic:</strong> ${result.intent.topic}</p>` : ''}
+                    ${result.intent.query_terms ? `<p><strong>Query Terms:</strong> ${result.intent.query_terms.join(', ')}</p>` : ''}
+                `;
+            }
+            
+            responseContent.innerHTML = html;
+            responseDiv.style.display = 'block';
+        }
+        
+        function showError(message) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.className = 'response error';
+            responseDiv.innerHTML = `<h3>❌ Error:</h3><p>${message}</p>`;
+            responseDiv.style.display = 'block';
+        }
+        
+        function showSuccess(message) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.className = 'response';
+            responseDiv.innerHTML = `<h3>✅ Success:</h3><p>${message}</p>`;
+            responseDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
