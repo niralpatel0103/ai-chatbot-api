@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from groq import Groq
 from dotenv import load_dotenv
 
-from database import engine, SessionLocal, Base, User, FileUpload, Chunk, ChatHistory, get_db, init_db
+from database import engine, SessionLocal, Base, User, FileUpload, Chunk, ChatHistory, get_db, init_db, is_postgres
 from utils.pdf_utils import extract_text_from_pdf
 from utils.chunker import chunk_text
 from utils.vector_store import create_embeddings, search_vectors
@@ -27,23 +27,36 @@ init_db()
 app = FastAPI(title="NexusAI SaaS Backend")
 
 # CORS
-cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:4200,http://127.0.0.1:4200")
+cors_origins_raw = os.getenv(
+    "CORS_ORIGINS", 
+    "http://localhost:4200,http://127.0.0.1:4200,http://[::1]:4200,http://localhost:8000,http://127.0.0.1:8000,http://[::1]:8000"
+)
 origins = [origin.strip() for origin in cors_origins_raw.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"https://.*\.vercel\.app", # Support Vercel previews
+    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.trycloudflare\.com|http://localhost:.*|http://127\.0\.0\.1:.*|http://\[::1\]:.*", 
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "bypass-tunnel-reminder", "Accept", "X-Requested-With"],
+    expose_headers=["*"],
 )
+
+# Custom middleware to handle Private Network Access (PNA)
+@app.middleware("http")
+async def add_pna_header(request, call_next):
+    response = await call_next(request)
+    if request.method == "OPTIONS":
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
 
 # Groq Client
 api_key = os.getenv("GROQ_API_KEY")
 if not api_key:
     raise ValueError("API key not found. Check your .env file")
 client = Groq(api_key=api_key)
+groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # Security
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -141,7 +154,7 @@ async def upload_pdf(
                 file_id=new_file.id,
                 user_id=current_user.id,
                 content=chunk["content"],
-                embedding=emb.tolist()
+                embedding=emb.tolist() if is_postgres else json.dumps(emb.tolist())
             )
             db.add(new_chunk)
 
@@ -209,7 +222,7 @@ async def ask_via_api_key(api_key: str, q: str, db: Session = Depends(get_db)):
     try:
         chat_completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
+            model=groq_model,
         )
         answer = chat_completion.choices[0].message.content
 
